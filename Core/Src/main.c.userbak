@@ -1,0 +1,175 @@
+#include "main.h"
+#include "x42s.h"
+#include <stdio.h>
+
+static void MX_USART6_UART_Init(void);
+static void MX_UART7_Init(void);
+static void MX_GPIO_Init(void);
+static void SystemClock_Config(void);
+
+int fputc(int ch, FILE *file)
+{
+  (void)file;
+  while ((UART7->SR & USART_SR_TXE) == 0U) {}
+  UART7->DR = (uint8_t)ch;
+  return ch;
+}
+
+int main(void)
+{
+  const uint8_t addresses[] = {1U, 2U, 3U, 4U};
+  uint8_t status;
+  uint8_t ack;
+  int16_t rpm;
+
+  HAL_Init();
+  SystemClock_Config();
+  MX_GPIO_Init();
+  MX_USART6_UART_Init();
+  MX_UART7_Init();
+  x42s_init(USART6);
+
+  printf("\r\nZDT X42S x4 run test\r\n");
+  printf("Motor bus : USART6 PG14(TX)->R/A/H, PG9(RX)<-T/B/L, 115200 8N1\r\n");
+  printf("Debug port: UART7  PE8(TX) 115200 8N1\r\n");
+  /* X42S 上电后要做编码器校准, 约 1~2s 内不应答, 先等它初始化 */
+  printf("Waiting 2s for motor init...\r\n");
+  HAL_Delay(2000U);
+
+  for (uint8_t i = 0U; i < 4U; ++i)
+  {
+    if (x42s_read_status(addresses[i], &status))
+    {
+      printf("M%u status=0x%02X (en=%u)\r\n",
+             addresses[i], status, (status & X42S_ST_ENABLED) != 0U);
+    }
+    else
+    {
+      printf("M%u STATUS NO REPLY\r\n", addresses[i]);
+    }
+    HAL_Delay(20U);
+  }
+
+  for (uint8_t i = 0U; i < 4U; ++i)
+  {
+    ack = x42s_enable(addresses[i], 1U, X42S_SYNC_NOW);
+    printf("M%u ENABLE: %s\r\n", addresses[i], ack ? "ACK OK" : "NO ACK");
+    HAL_Delay(30U);
+  }
+
+  /*
+   * Use immediate execution instead of the broadcast sync command.
+   * This makes the first four-motor test independent of sync support.
+   */
+  printf("All motors: 100 RPM CW for 10 seconds\r\n");
+  for (uint8_t i = 0U; i < 4U; ++i)
+  {
+    ack = x42s_set_speed(addresses[i], X42S_DIR_CW, 100U, 20U,
+                         X42S_SYNC_NOW);
+    printf("M%u SPEED: %s\r\n", addresses[i], ack ? "ACK OK" : "NO ACK");
+    HAL_Delay(30U);
+  }
+
+  /* 10s 内每 500ms 回读一次实时转速, 非 0 即真的在转 */
+  for (uint8_t t = 0U; t < 20U; ++t)
+  {
+    for (uint8_t i = 0U; i < 4U; ++i)
+    {
+      if (x42s_read_speed(addresses[i], &rpm))
+      {
+        printf("t=%2us M%u speed=%d RPM\r\n", t / 2U, addresses[i], rpm);
+      }
+      else
+      {
+        printf("t=%2us M%u SPEED NO REPLY\r\n", t / 2U, addresses[i]);
+      }
+      HAL_Delay(20U);
+    }
+    HAL_Delay(400U);
+  }
+
+  for (uint8_t i = 0U; i < 4U; ++i)
+  {
+    ack = x42s_stop(addresses[i], X42S_SYNC_NOW);
+    printf("M%u STOP: %s\r\n", addresses[i], ack ? "ACK OK" : "NO ACK");
+    HAL_Delay(30U);
+    ack = x42s_enable(addresses[i], 0U, X42S_SYNC_NOW);
+    printf("M%u DISABLE: %s\r\n", addresses[i], ack ? "ACK OK" : "NO ACK");
+  }
+
+  while (1)
+  {
+    HAL_Delay(1000U);
+  }
+}
+
+static void MX_USART6_UART_Init(void)
+{
+  GPIO_InitTypeDef gpio = {0};
+  __HAL_RCC_USART6_CLK_ENABLE();
+  __HAL_RCC_GPIOG_CLK_ENABLE();
+  gpio.Pin = GPIO_PIN_9 | GPIO_PIN_14;
+  gpio.Mode = GPIO_MODE_AF_PP;
+  gpio.Pull = GPIO_PULLUP;
+  gpio.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+  gpio.Alternate = GPIO_AF8_USART6;
+  HAL_GPIO_Init(GPIOG, &gpio);
+
+  USART6->BRR = 139U; /* 16 MHz / 115200, oversampling by 16 */
+  USART6->CR1 = USART_CR1_TE | USART_CR1_RE | USART_CR1_UE;
+}
+
+static void MX_UART7_Init(void)
+{
+  GPIO_InitTypeDef gpio = {0};
+  __HAL_RCC_UART7_CLK_ENABLE();
+  __HAL_RCC_GPIOE_CLK_ENABLE();
+  gpio.Pin = GPIO_PIN_7 | GPIO_PIN_8;
+  gpio.Mode = GPIO_MODE_AF_PP;
+  gpio.Pull = GPIO_PULLUP;
+  gpio.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+  gpio.Alternate = GPIO_AF8_UART7;
+  HAL_GPIO_Init(GPIOE, &gpio);
+
+  UART7->BRR = 139U; /* 16 MHz / 115200, oversampling by 16 */
+  UART7->CR1 = USART_CR1_TE | USART_CR1_RE | USART_CR1_UE;
+}
+
+static void MX_GPIO_Init(void)
+{
+  __HAL_RCC_GPIOF_CLK_ENABLE();
+  GPIO_InitTypeDef gpio = {0};
+  gpio.Pin = GPIO_PIN_14;
+  gpio.Mode = GPIO_MODE_OUTPUT_PP;
+  gpio.Pull = GPIO_NOPULL;
+  gpio.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOF, &gpio);
+}
+
+static void SystemClock_Config(void)
+{
+  RCC_OscInitTypeDef osc = {0};
+  RCC_ClkInitTypeDef clk = {0};
+  __HAL_RCC_PWR_CLK_ENABLE();
+  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE3);
+  osc.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+  osc.HSIState = RCC_HSI_ON;
+  osc.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+  osc.PLL.PLLState = RCC_PLL_NONE;
+  if (HAL_RCC_OscConfig(&osc) != HAL_OK) Error_Handler();
+  clk.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK |
+                  RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
+  clk.SYSCLKSource = RCC_SYSCLKSOURCE_HSI;
+  clk.AHBCLKDivider = RCC_SYSCLK_DIV1;
+  clk.APB1CLKDivider = RCC_HCLK_DIV1;
+  clk.APB2CLKDivider = RCC_HCLK_DIV1;
+  if (HAL_RCC_ClockConfig(&clk, FLASH_LATENCY_0) != HAL_OK) Error_Handler();
+}
+
+void Error_Handler(void)
+{
+  __disable_irq();
+  while (1)
+  {
+  }
+}

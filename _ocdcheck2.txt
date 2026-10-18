@@ -1,0 +1,14 @@
+--- bin ---
+libftdi1.dll
+libusb-1.0.dll
+openocd.exe
+--- openocd ??? ---
+angie
+contrib
+OpenULINK
+scripts
+--- ???? scripts ---
+D:\STM32_Tools\openocd\xpack-openocd-0.12.0-7\openocd\scripts
+--- ?? stm32f4x.cfg ---
+D:\STM32_Tools\openocd\xpack-openocd-0.12.0-7\openocd\scripts\target\stm32f4x.cfg
+

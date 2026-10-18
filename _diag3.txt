@@ -1,0 +1,80 @@
+openocd.exe : xPack Open On-Chip Debugger 0.12.0+dev-02228-ge5888bda3-dirty (20
+25-10-04-22:44)
+???? ?:445 ??: 149
++ ... d\scripts"; & $ocd -s $scripts -f interface/stlink.cfg -f target/stm3 ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (xPack Open On-C...25-10-04-22:44) 
+   :String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+Licensed under GNU GPL v2
+For bug reports, read
+	http://openocd.org/doc/doxygen/bugs.html
+Warn : DEPRECATED: auto-selecting transport "swd (dapdirect)". Use 'transport s
+elect swd' to suppress this message.
+Info : STLINK V2J28M18 (API v2) VID:PID 0483:374B
+Info : Target voltage: 3.241517
+Info : clock speed 480 kHz
+Info : SWD DPIDR 0x2ba01477
+Error: [stm32f4x.cpu] Examination failed
+Warn : target stm32f4x.cpu examination failed
+Info : [stm32f4x.cpu] starting gdb server on 3333
+Info : Listening on port 3333 for gdb connections
+adapter
+  adapter assert |deassert [srst|trst [assert|deassert srst|trst]]
+  adapter deassert |assert [srst|trst [deassert|assert srst|trst]]
+  adapter driver driver_name
+  adapter gpio [
+            
+            do|tdi|tms|tck|trst|swdio|swdio_dir|swclk|srst|led[gpio_number]
+            [-chip chip_number] [-active-high|-active-low]
+            [-push-pull|-open-drain|-open-source]
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            e|-pull-up|-pull-down][-init-inactive|-init-active|-init-input]
+            ][-exit-no-change|-exit-inactive|-exit-active|-exit-input] ]
+  adapter list
+  adapter name
+  adapter serial serial_string
+  adapter speed [khz]
+  adapter srst
+    adapter srst delay [milliseconds]
+    adapter srst pulse_width [milliseconds]
+  adapter usb
+    adapter usb location [<bus>-port[.port]...]
+dap
+  dap create name '-chain-position' name
+  dap info [ap_num | 'root']
+  dap init
+  dap names
+reset_config [none|trst_only|srst_only|trst_and_srst]
+          [srst_pulls_trst|trst_pulls_srst|combined|separate]
+          [srst_gates_jtag|srst_nogate] [trst_push_pull|trst_open_drain]
+          [srst_push_pull|srst_open_drain]
+          [connect_deassert_srst|connect_assert_srst]
+  st-link vid_pid (vid pid)+
+stm32f4x.dap
+  stm32f4x.dap apcsw [value [mask]]
+  stm32f4x.dap apid [ap_num]
+  stm32f4x.dap apreg ap_num reg [value]
+  stm32f4x.dap apsel [ap_num]
+  stm32f4x.dap baseaddr [ap_num]
+  stm32f4x.dap dpreg reg [value]
+  stm32f4x.dap info [ap_num | 'root']
+  stm32f4x.dap memaccess [cycles]
+  stm32f4x.dap nu_npcx_quirks [enable]
+  stm32f4x.dap ti_be_32_quirks [enable]
+  swd newdap basename dap_type ['-irlen' count] ['-enable'|'-disable']
+            ['-expected_id' number] ['-ignore-version'] ['-ignore-bypass']
+            ['-ircapture' number] ['-ir-bypass' number] ['-mask' number]
+  swo create name [-dap dap] [-ap-num num] [-baseaddr baseaddr]
+  tpiu create name [-dap dap] [-ap-num num] [-baseaddr baseaddr]
+

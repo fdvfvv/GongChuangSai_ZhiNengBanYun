@@ -1,0 +1,7 @@
+
+Info : [stm32f4x.cpu] Examination succeed
+** Programming Started **
+** Programming Finished **
+** Verified OK **
+
+

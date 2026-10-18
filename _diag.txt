@@ -1,0 +1,26 @@
+openocd.exe : xPack Open On-Chip Debugger 0.12.0+dev-02228-ge5888bda3-dirty (20
+25-10-04-22:44)
+???? ?:445 ??: 141
++ ... 7\scripts"; & $ocd -s $scripts -f interface/stlink.cfg -f target/stm3 ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (xPack Open On-C...25-10-04-22:44) 
+   :String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+Licensed under GNU GPL v2
+For bug reports, read
+	http://openocd.org/doc/doxygen/bugs.html
+Warn : DEPRECATED: auto-selecting transport "swd (dapdirect)". Use 'transport s
+elect swd' to suppress this message.
+Info : STLINK V2J28M18 (API v2) VID:PID 0483:374B
+Info : Target voltage: 3.255888
+Info : Unable to match requested speed 2000 kHz, using 1800 kHz
+Info : Unable to match requested speed 2000 kHz, using 1800 kHz
+Info : clock speed 1800 kHz
+Info : SWD DPIDR 0x2ba01477
+Error: [stm32f4x.cpu] Examination failed
+Warn : target stm32f4x.cpu examination failed
+Info : [stm32f4x.cpu] starting gdb server on 3333
+Info : Listening on port 3333 for gdb connections
+Error: Target not examined yet
+

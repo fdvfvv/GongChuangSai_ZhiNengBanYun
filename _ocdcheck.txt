@@ -1,0 +1,9 @@
+OCD_EXISTS=True
+--- openocd ?? ---
+xpack-openocd-0.12.0-7 (d-----)
+--- xpack ???? ---
+bin
+distro-info
+openocd
+README.md
+

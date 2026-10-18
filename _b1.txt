@@ -1,0 +1,6 @@
+[1/2] Building C object CMakeFiles/GongChuangSai_Project.dir/Core/Src/main.c.obj
+[2/2] Linking C executable GongChuangSai_Project.elf
+Memory region         Used Size  Region Size  %age Used
+             RAM:        1600 B       192 KB      0.81%
+          CCMRAM:           0 B        64 KB      0.00%
+           FLASH:        8388 B         2 MB      0.40%

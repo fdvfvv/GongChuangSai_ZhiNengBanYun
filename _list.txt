@@ -1,0 +1,13 @@
+openocd.exe : xPack Open On-Chip Debugger 0.12.0+dev-02228-ge5888bda3-dirty (20
+25-10-04-22:44)
+???? ?:445 ??: 141
++ ... 7\scripts"; & $ocd -s $scripts -f interface/stlink.cfg -c "stlink hla ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (xPack Open On-C...25-10-04-22:44) 
+   :String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+Licensed under GNU GPL v2
+For bug reports, read
+	http://openocd.org/doc/doxygen/bugs.html
+invalid command name "stlink"

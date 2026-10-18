@@ -1,0 +1,14 @@
+python.exe : Traceback (most recent call last):
+???? ?:445 ??: 80
++ ... ython.exe"; & $py -c "from PIL import Image; img=Image.open(r'C:\User ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Traceback (most recent call last) 
+   ::String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  File "<string>", line 1, in <module>
+    from PIL import Image; img=Image.open(r'C:\Users\16599\Desktop\?????????\??
+????\ZDT_XS????????????????????10.???_STM32F103\HAL??Emm??????\CAN???\STM32 CAN
+???.jpg'); print('size',img.size)
+    ^^^^^^^^^^^^^^^^^^^^^
+ModuleNotFoundError: No module named 'PIL'

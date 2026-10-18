@@ -1,0 +1,4 @@
+EXE_EXISTS=True
+VERSION=2.5.7
+DESC=Upgrade the firmware of the ST-LINK
+

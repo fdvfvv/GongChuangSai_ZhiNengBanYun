@@ -1,0 +1,21 @@
+
+
+Status       : OK
+FriendlyName : ST-Link Debug
+InstanceId   : USB\VID_0483&PID_374B&MI_00\8&2A639592&0&0000
+
+Status       : OK
+FriendlyName : USB Composite Device
+InstanceId   : USB\VID_0483&PID_374B\005300264A00001156313848
+
+Status       : OK
+FriendlyName : USB ???????
+InstanceId   : USB\VID_0483&PID_374B&MI_01\8&2A639592&0&0001
+
+Status       : OK
+FriendlyName : STMicroelectronics STLink Virtual COM Port (COM5)
+InstanceId   : USB\VID_0483&PID_374B&MI_02\8&2A639592&0&0002
+
+
+
+

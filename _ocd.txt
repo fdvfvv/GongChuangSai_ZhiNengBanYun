@@ -1,0 +1,2 @@
+OPENOCD_EXISTS=True
+xPack Open On-Chip Debugger 0.12.0+dev-02228-ge5888bda3-dirty (2025-10-04-22:44)

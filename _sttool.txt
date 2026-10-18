@@ -1,0 +1,8 @@
+=== Keil5 ?? ===
+Core
+Pack
+  D:\AppSoftWare_YingYong\Keil5\Core\ARM\STLink\ST-LINKIII-KEIL_SWO.dll
+  D:\AppSoftWare_YingYong\Keil5\Core\ARM\STLink\ST-LinkUpgrade.exe
+
+=== ?? ST-LINK_CLI / STM32_Programmer ===
+

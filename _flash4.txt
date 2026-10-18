@@ -1,0 +1,35 @@
+openocd.exe : xPack Open On-Chip Debugger 0.12.0+dev-02228-ge5888bda3-dirty (20
+25-10-04-22:44)
+???? ?:445 ??: 230
++ ... oject.elf"; & $ocd -s $scripts -f interface/stlink.cfg -f target/stm3 ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (xPack Open On-C...25-10-04-22:44) 
+   :String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+Licensed under GNU GPL v2
+For bug reports, read
+	http://openocd.org/doc/doxygen/bugs.html
+Warn : DEPRECATED: auto-selecting transport "swd (dapdirect)". Use 'transport s
+elect swd' to suppress this message.
+Info : STLINK V2J28M18 (API v2) VID:PID 0483:374B
+Info : Target voltage: 3.249501
+Info : Unable to match requested speed 2000 kHz, using 1800 kHz
+Info : Unable to match requested speed 2000 kHz, using 1800 kHz
+Info : clock speed 1800 kHz
+Info : SWD DPIDR 0x2ba01477
+Error: [stm32f4x.cpu] Examination failed
+Warn : target stm32f4x.cpu examination failed
+Info : [stm32f4x.cpu] starting gdb server on 3333
+Info : Listening on port 3333 for gdb connections
+Info : Unable to match requested speed 2000 kHz, using 1800 kHz
+Info : Unable to match requested speed 2000 kHz, using 1800 kHz
+Info : [stm32f4x.cpu] AP write error, reset will not halt
+** Unable to reset target **
+shutdown command invoked
+embedded:startup.tcl:1893: Error: 
+Traceback (most recent call last):
+  File "embedded:startup.tcl", line 1933, in program
+    program_error {** Unable to reset target **} 1
+  File "embedded:startup.tcl", line 1893, in program_error
+    shutdown error

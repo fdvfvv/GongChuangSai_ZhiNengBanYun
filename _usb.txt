@@ -1,0 +1,8 @@
+
+Status FriendlyName                                      InstanceId            
+------ ------------                                      ----------            
+OK     ST-Link Debug                                     USB\VID_0483&PID_37...
+OK     STMicroelectronics STLink Virtual COM Port (COM5) USB\VID_0483&PID_37...
+
+
+

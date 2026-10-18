@@ -1,0 +1,2 @@
+SCRIPTS_EXISTS=False
+
