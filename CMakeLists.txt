@@ -46,6 +46,10 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/x42s.c
     Core/Src/zdt_can.c
+    Core/Src/dm_imu.c
+    Core/Src/chassis_math.c
+    Core/Src/chassis.c
+    Core/Src/trajectory.c
 )
 
 # Add include paths

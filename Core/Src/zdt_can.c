@@ -12,12 +12,14 @@ volatile uint32_t g_can_active = 0;  /* 0=无, 1=CAN1, 2=CAN2 */
 static CAN_TypeDef *s_can = NULL;    /* 当前使用的 CAN 控制器 */
 
 /* 发一帧扩展帧: 邮箱0, 返回 1=已投递。
- * 超时用硬件计数循环(不依赖 SysTick 中断): 16MHz 下 4000000 次迭代 ≈ 30ms,
- * 避免 uwTick 停走时死循环卡死整个程序。 */
-static uint8_t can_tx(CAN_TypeDef *can, uint32_t extid,
-                      const uint8_t *data, uint8_t dlc)
+ * 超时用硬件计数循环(不依赖 SysTick 中断): 16MHz 下 800000 次迭代 ≈ 30ms,
+ * 避免 uwTick 停走时死循环卡死整个程序。
+ * spin_budget 用于区分“启动探测可等”和“控制循环只等一小会”。 */
+static uint8_t can_tx_budget(CAN_TypeDef *can, uint32_t extid,
+                             const uint8_t *data, uint8_t dlc,
+                             uint32_t spin_budget)
 {
-  for (volatile uint32_t spin = 0U; spin < 800000U; ++spin)
+  for (volatile uint32_t spin = 0U; spin < spin_budget; ++spin)
   {
     if ((can->TSR & CAN_TSR_TME0) != 0U) break;
   }
@@ -31,6 +33,12 @@ static uint8_t can_tx(CAN_TypeDef *can, uint32_t extid,
                             ((uint32_t)data[6] << 16) | ((uint32_t)data[7] << 24);
   can->sTxMailBox[0].TIR |= 1U; /* TXRQ 置起 */
   return 1U;
+}
+
+static uint8_t can_tx(CAN_TypeDef *can, uint32_t extid,
+                      const uint8_t *data, uint8_t dlc)
+{
+  return can_tx_budget(can, extid, data, dlc, 800000U);
 }
 
 /* 收一帧 (非阻塞), 返回 1=收到 */
@@ -221,6 +229,37 @@ uint8_t zdt_can_set_speed(uint8_t addr, uint8_t dir, uint16_t rpm, uint8_t acc)
 
   if (!zdt_can_send_cmd(addr, payload, sizeof(payload))) return 0U;
   return can_recv(addr, ZDT_CMD_SPEED, data, &dlc, 300000U);
+}
+
+/* 控制循环用：单帧、不等回复。100Hz 下四轮命令约 1ms 发完，
+ * 单台电机掉线也不会因为等 ACK 把整个循环拖慢。 */
+uint8_t zdt_can_set_speed_nowait(uint8_t addr, uint8_t dir, uint16_t rpm, uint8_t acc)
+{
+  uint8_t data[8] = {ZDT_CMD_SPEED, dir & 1U, (uint8_t)(rpm >> 8),
+                     (uint8_t)rpm, acc, 0x00U, ZDT_FIXED_CRC, 0x00U};
+
+  if (s_can == NULL) return 0U;
+  return can_tx_budget(s_can, ((uint32_t)addr << 8), data, 7U, 6000U);
+}
+
+/* 运行中自愈：只发单帧，不等回复，避免拖慢控制循环 */
+uint8_t zdt_can_enable_nowait(uint8_t addr, uint8_t enable)
+{
+  uint8_t data[8] = {ZDT_CMD_ENABLE, 0xABU, enable ? 1U : 0U, 0x00U,
+                     ZDT_FIXED_CRC, 0x00U, 0x00U, 0x00U};
+
+  if (s_can == NULL) return 0U;
+  return can_tx_budget(s_can, ((uint32_t)addr << 8), data, 5U, 6000U);
+}
+
+/* 解除堵转保护 (Emm: addr 0x0E 0x52 0x6B)，只发不等 */
+uint8_t zdt_can_clear_clog_nowait(uint8_t addr)
+{
+  uint8_t data[8] = {ZDT_CMD_CLR_CLOG, 0x52U, ZDT_FIXED_CRC, 0x00U,
+                     0x00U, 0x00U, 0x00U, 0x00U};
+
+  if (s_can == NULL) return 0U;
+  return can_tx_budget(s_can, ((uint32_t)addr << 8), data, 3U, 6000U);
 }
 
 uint8_t zdt_can_stop(uint8_t addr)

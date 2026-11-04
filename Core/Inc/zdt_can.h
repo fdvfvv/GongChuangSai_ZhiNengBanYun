@@ -41,6 +41,15 @@ uint8_t zdt_can_init(uint32_t btr);
 uint8_t zdt_can_send_cmd(uint8_t addr, const uint8_t *payload, uint8_t len);
 uint8_t zdt_can_enable(uint8_t addr, uint8_t enable);
 uint8_t zdt_can_set_speed(uint8_t addr, uint8_t dir, uint16_t rpm, uint8_t acc);
+
+/* 控制循环专用：只发速度帧，不等电机回复（避免单台掉线把 100Hz 循环拖死）。
+ * 返回 0 通常只是邮箱暂时忙，下一周期会重发。 */
+uint8_t zdt_can_set_speed_nowait(uint8_t addr, uint8_t dir, uint16_t rpm, uint8_t acc);
+
+/* 运行中的 2 秒自愈：只发命令不等回复，防止驱动器掉使能/堵转保护 */
+uint8_t zdt_can_enable_nowait(uint8_t addr, uint8_t enable);
+uint8_t zdt_can_clear_clog_nowait(uint8_t addr);
+
 uint8_t zdt_can_stop(uint8_t addr);
 uint8_t zdt_can_clear_clog(uint8_t addr);
 uint8_t zdt_can_read_speed(uint8_t addr, int16_t *rpm);
@@ -48,7 +57,7 @@ uint8_t zdt_can_read_status(uint8_t addr, uint8_t *status);
 
 /* 诊断: 两个 CAN 各自能否退出初始化(总线隐性), 及最终选定的总线 */
 extern volatile uint32_t g_can1_ready; /* CAN1(PA11/PA12) 就绪 */
-extern volatile uint32_t g_can2_ready; /* CAN2(PB5/PB13)  就绪 */
+extern volatile uint32_t g_can2_ready; /* CAN2(PB12/PB13) 就绪 */
 extern volatile uint32_t g_can_active; /* 0=无, 1=CAN1, 2=CAN2 */
 
 #endif
