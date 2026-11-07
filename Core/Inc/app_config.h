@@ -25,8 +25,8 @@
 #define IMU_AUTO_BAUD           1U      /* 1 = 1 Mbps 找不到时自动再试 500 kbps */
 #define IMU_SLAVE_ID            1U      /* 上位机里设置的“从机 ID”，出厂 1 */
 #define IMU_MASTER_ID           0x11U   /* 上位机里设置的“主机 ID”，出厂 0x11 */
-#define IMU_YAW_SIGN            (+1.0f) /* IMU 倒装/旋转 180° 时改成 -1.0f */
-#define IMU_TIMEOUT_MS          300U    /* 超过这么久没收到帧就判离线并停车 */
+#define IMU_YAW_SIGN            (+1.0f) /* 2026-11-07 实测标定：IMU 虽倒装(roll≈179°)但原始 yaw 仍是左转为正，保持 +1 */
+#define IMU_TIMEOUT_MS          500U    /* 超过这么久没收到帧就判离线并停车（放宽点，避免偶发一帧丢判离线） */
 #define IMU_RATE_LPF_ALPHA      0.35f   /* 角速度低通系数，0~1，越小越平滑但越滞后 */
 #define IMU_SAVE_CONFIG         0U      /* 1 = 把主动上报配置写进 IMU Flash（少用，避免磨损） */
 
@@ -53,10 +53,17 @@
 
 /* 0 = 正转命令让该轮向前；1 = 反一下。
  * 麦轮左右镜像安装时，通常一侧需要取反，实车用“单轮点动”确认。 */
+/* 2026-11-07 三次实车 + 黑匣子数据反推（不依赖肉眼）：
+ * 设 f_i = 原始正命令下该轮的物理方向，由
+ *   第2次(FL/RL取反) 前进段 yaw 恒 0  =>  f1+f2+f3+f4 = 0
+ *   第1次(不取反)   前进段 yaw 掉到-22 =>  f1-f2+f3-f4 ≠ 0
+ * 唯一解 f=(+,-,+,-)：**右侧两轮是镜像件**（右轮原始正命令是后退）。
+ * 故只取反 FR、RR。校验：全轮前进时四轮物理同向；右转段 FL/FR 同向、
+ * RL/RR 同向且两侧相反。 */
 #define MOTOR_FL_INVERT         0
-#define MOTOR_FR_INVERT         0
+#define MOTOR_FR_INVERT         1
 #define MOTOR_RL_INVERT         0
-#define MOTOR_RR_INVERT         0
+#define MOTOR_RR_INVERT         1
 
 /* 1 = 麦轮全向底盘；0 = 普通四驱差速底盘（左两轮同速、右两轮同速） */
 #define CHASSIS_MECANUM         1
@@ -88,12 +95,30 @@
  * 5. 启动与调试
  * ========================================================================== */
 
-#define APP_REQUIRE_START_BUTTON 1      /* 1 = 上电后按 A 板 KEY(PB2) 才发车 */
-#define APP_START_DELAY_MS       1200U  /* 按键后延时，给队员离开车的时间 */
+/* 2026-11-07 调试：PB2 在 STM32F427 上是 BOOT1，A 板该脚有外部下拉，
+ * 实测恒读 0(被当成常按)，按键事件不可用 -> 暂时改成上电延时自动发车。
+ * 按键改到可用引脚后再改回 1。 */
+#define APP_REQUIRE_START_BUTTON 0      /* 1 = 上电后按 A 板 KEY 才发车 */
+#define APP_START_DELAY_MS       500U   /* 发车前延时（一上电就走，短一点） */
 #define APP_CONTROL_PERIOD_MS    10U    /* 控制周期 10ms = 100Hz */
 
-/* 1 = 上电只做单轮 30RPM 点动，用来确认地址/方向；确认完改回 0 */
+/* 1 = 上电只做电机链路自检（读状态/使能/读转速/点动），确认地址与方向。
+ * 确认完必须改回 0。 */
 #define APP_WHEEL_TEST_MODE      0
+
+/* 1 = 上电做四模式方向标定：全正 / 左+右- / 前+后- / 对角，
+ * 每种各转 2.5 秒并记录 yaw 变化，用来确定哪种组合能真原地转。
+ * 标定完必须改回 0。 */
+#define APP_MOTION_TEST_MODE     0
+
+/* 1 = 上电只监控 IMU：不停轮、不跑轨迹，把 yaw 极值和峰值角速度记录到 RAM。
+ * 用来单独验证陀螺仪是否真的在输出变化。验证完必须改回 0。 */
+#define APP_IMU_MONITOR_MODE     0
+
+/* 1 = 架空观察轮子转向：循环做“四轮同向 5s / 停 2s / 左右反向 5s / 停 2s”共 3 轮。
+ * 走真实底盘通路（含 INVERT 修正），只看不动车。观察完必须改回 0。 */
+#define APP_AIR_TEST_MODE        0
+
 
 /* 1 = 编译“电机 CAN 诊断固件”：扫描地址 1~8，按 KEY 逐个点动。
  * 正常跑车必须改回 0。 */

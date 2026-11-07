@@ -28,6 +28,7 @@
 #include "dm_imu.h"
 #include "chassis.h"
 #include "trajectory.h"
+#include "trace.h"
 #include "diag.h"
 
 #include <math.h>
@@ -36,7 +37,8 @@ static void MX_GPIO_Init(void);
 static void SystemClock_Config(void);
 
 /* ==========================================================================
- * 演示轨迹：0.6 m 正方形，四边直线 + 四个 90° 左转
+ * 当前演示轨迹：
+ *   前进 20 cm 直线 -> 原地右转 90° -> 再前进 20 cm 直线 -> 停
  *
  * 想跑圆环就把下面整张表换成：
  *   static const traj_segment_t g_demo_route[] =
@@ -46,20 +48,20 @@ static void SystemClock_Config(void);
  * ========================================================================== */
 static const traj_segment_t g_demo_route[] =
 {
-    { TRAJ_SEG_STRAIGHT, 0.60f, 0.22f, 0.0f },
-    { TRAJ_SEG_TURN,     90.0f, 50.0f, 0.0f },
-    { TRAJ_SEG_STRAIGHT, 0.60f, 0.22f, 0.0f },
-    { TRAJ_SEG_TURN,     90.0f, 50.0f, 0.0f },
-    { TRAJ_SEG_STRAIGHT, 0.60f, 0.22f, 0.0f },
-    { TRAJ_SEG_TURN,     90.0f, 50.0f, 0.0f },
-    { TRAJ_SEG_STRAIGHT, 0.60f, 0.22f, 0.0f },
-    { TRAJ_SEG_TURN,     90.0f, 50.0f, 0.0f },
-    { TRAJ_SEG_WAIT,     0.50f, 0.0f,  0.0f },
+    { TRAJ_SEG_STRAIGHT, 0.20f, 0.18f, 0.0f },   /* 前进 20 cm，0.18 m/s */
+    { TRAJ_SEG_TURN,    -90.0f, 60.0f, 0.0f },   /* 右转 90°，60°/s */
+    { TRAJ_SEG_STRAIGHT, 0.20f, 0.18f, 0.0f },   /* 再前进 20 cm */
+    { TRAJ_SEG_WAIT,      0.30f, 0.0f,  0.0f },  /* 停 0.3 s */
 };
 
 #define DEMO_ROUTE_COUNT (sizeof(g_demo_route) / sizeof(g_demo_route[0]))
 
 static uint8_t g_runtime_fault;   /* 4=IMU 掉线, 5=轨迹超时 */
+
+/* 启动阶段诊断：ST-Link 直接读，定位卡在哪一步
+ * 0=上电 1=CAN1就绪 2=电机探测完 3=电机使能完 4=IMU就绪 5=等KEY 6=已发车 */
+volatile uint8_t g_boot_stage;
+volatile uint8_t g_motors_online;
 
 /* 与 chassis.c 使用同一组地址宏，改 app_config.h 一处即可 */
 static const uint8_t g_motor_addr[4] =
@@ -109,6 +111,7 @@ static void led_report(uint8_t n)
     }
 }
 
+#if APP_REQUIRE_START_BUTTON
 static uint8_t button_raw_pressed(void)
 {
     return (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_2) == GPIO_PIN_RESET) ? 1U : 0U;
@@ -137,7 +140,25 @@ static uint8_t button_pressed_event(void)
     }
     return 0U;
 }
+#endif /* APP_REQUIRE_START_BUTTON */
 
+/* 发车前所有等待都必须"边等边收 IMU"。
+ * 踩过的坑：直接用 HAL_Delay(2000) 等待时没人调 dm_imu_poll()，
+ * IMU 超过 IMU_TIMEOUT_MS(300ms) 就被判离线，后面那道
+ * if(!dm_imu_is_online()) led_report(3) 会直接进死循环闪灯，
+ * 表现为板子停在 boot_stage=5 永不发车。 */
+static void delay_with_imu(uint32_t ms)
+{
+    uint32_t start = HAL_GetTick();
+    while ((HAL_GetTick() - start) < ms)
+    {
+        dm_imu_poll();
+        HAL_Delay(2U);
+    }
+}
+
+
+#if APP_REQUIRE_START_BUTTON
 static void wait_for_start(void)
 {
     uint32_t last = HAL_GetTick();
@@ -160,28 +181,26 @@ static void wait_for_start(void)
 
     led_off();
 }
+#endif
 
 /* ------------------------------------------------------------------------- */
 /* 电机                                                                      */
 /* ------------------------------------------------------------------------- */
 
+/* 单轮探测：扫 1~4 一次，返回应答台数。重试由 main 里“等到 4 台”的外层循环负责。 */
 static uint8_t motor_probe(void)
 {
     uint8_t status = 0U;
-    uint8_t ok = 0U;
+    uint8_t count = 0U;
 
-    /* 四轮车必须四台都在线，少一台轨迹会跑歪，宁可上电就报错 */
-    for (uint8_t round = 0U; round < 10U; ++round)
+    for (uint8_t i = 0U; i < 4U; ++i)
     {
-        ok = 0U;
-        for (uint8_t i = 0U; i < 4U; ++i)
+        if (zdt_can_read_status(g_motor_addr[i], &status))
         {
-            if (zdt_can_read_status(g_motor_addr[i], &status)) ++ok;
+            ++count;
         }
-        if (ok >= 4U) break;
-        HAL_Delay(300U);
     }
-    return ok;
+    return count;
 }
 
 static void motor_prepare(void)
@@ -194,17 +213,142 @@ static void motor_prepare(void)
     HAL_Delay(100U);
 }
 
+#if APP_MOTION_TEST_MODE
+/* 四模式方向标定：每种模式 30RPM 转 2.5 秒，记录 yaw 变化量 x10。
+ * 用来判断“哪种四轮组合能让车体真的原地旋转”，以及转向的正负。 */
+volatile int16_t g_mtest_dyaw[4];   /* 模式 0..3 的 yaw 变化 x10 */
+volatile int16_t g_mtest_rpm[4][4]; /* [模式][电机] 运转中回读的实际转速 */
+volatile uint8_t g_mtest_phase;     /* 当前正在跑的相位 */
+volatile uint8_t g_mtest_clr[4];    /* 解除堵转保护有没有应答 */
+volatile uint8_t g_mtest_en[4];     /* 使能有没有应答 */
+volatile uint8_t g_mtest_st[4];     /* 读到的状态字节 */
+
+static void drive_pattern(const int8_t p[4], uint16_t rpm_mag)
+{
+    /* 测试用：逐台等待应答，确保四台都真的收到（连发会丢后两帧） */
+    for (uint8_t i = 0U; i < 4U; ++i)
+    {
+        uint8_t dir = (p[i] >= 0) ? ZDT_DIR_CW : ZDT_DIR_CCW;
+        (void)zdt_can_set_speed(g_motor_addr[i], dir, rpm_mag, ZDT_ACC);
+    }
+}
+
+/* 按住一个组合 ms 毫秒，期间每 100ms 重发一次命令，
+ * 和真实控制环一样靠重发兜住丢帧 */
+static void hold_pattern(const int8_t p[4], uint16_t rpm_mag, uint32_t ms)
+{
+    uint32_t start = HAL_GetTick();
+    uint32_t next = start;
+
+    while ((HAL_GetTick() - start) < ms)
+    {
+        uint32_t now = HAL_GetTick();
+        if ((int32_t)(now - next) >= 0)
+        {
+            next = now + 100U;
+            drive_pattern(p, rpm_mag);
+        }
+        dm_imu_poll();
+        HAL_Delay(2U);
+    }
+}
+
+static void motion_test(void)
+{
+    /* 顺序 FL/FR/RL/RR */
+    static const int8_t pat[4][4] =
+    {
+        {+1, +1, +1, +1},   /* 0 全正：应直行 */
+        {+1, -1, +1, -1},   /* 1 左+右-：理想麦轮应原地右转 */
+        {+1, +1, -1, -1},   /* 2 前+后- */
+        {+1, -1, -1, +1},   /* 3 对角 */
+    };
+    const int8_t zero[4] = {0, 0, 0, 0};
+
+    /* 逐台：解除堵转保护 -> 使能 -> 读状态，把应答都记下来 */
+    for (uint8_t i = 0U; i < 4U; ++i)
+    {
+        uint8_t st = 0U;
+        g_mtest_clr[i] = zdt_can_clear_clog(g_motor_addr[i]);
+        g_mtest_en[i] = zdt_can_enable(g_motor_addr[i], 1U);
+        g_mtest_st[i] = zdt_can_read_status(g_motor_addr[i], &st) ? st : 0xFFU;
+    }
+    delay_with_imu(300U);
+
+    for (uint8_t p = 0U; p < 4U; ++p)
+    {
+        g_mtest_phase = p;
+        float y0 = g_imu.yaw_deg;
+
+        hold_pattern(pat[p], 30U, 2500U);
+
+        /* 运转中回读实际转速：这是判断 nowait 发送到底有没有生效的铁证 */
+        for (uint8_t i = 0U; i < 4U; ++i)
+        {
+            int16_t r = 0;
+            if (zdt_can_read_speed(g_motor_addr[i], &r))
+            {
+                g_mtest_rpm[p][i] = r;
+            }
+            else
+            {
+                g_mtest_rpm[p][i] = -32768;
+            }
+        }
+
+        drive_pattern(zero, 0U);
+        delay_with_imu(800U);
+
+        float d = g_imu.yaw_deg - y0;
+        while (d > 180.0f)  d -= 360.0f;
+        while (d < -180.0f) d += 360.0f;
+        g_mtest_dyaw[p] = (int16_t)(d * 10.0f);
+    }
+
+    while (1)
+    {
+        led_blink_count(4U);
+    }
+}
+#endif
+
 #if APP_WHEEL_TEST_MODE
-/* 单轮 30RPM 点动，用来确认“地址 -> 车轮位置”和“正方向”。
- * 建议把车架空再开这个模式。 */
+/* 电机链路自检结果，用 ST-Link 读 RAM 即可看到每一步是否通 */
+volatile uint8_t g_mt_status_ok[4];   /* 0x3A 读状态有没有回应 */
+volatile uint8_t g_mt_status_val[4];  /* 状态字节 */
+volatile uint8_t g_mt_enable_ok[4];   /* F3 AB 01 使能有没有回应 */
+volatile uint8_t g_mt_read0_ok[4];    /* 运转前读转速是否成功 */
+volatile uint8_t g_mt_read1_ok[4];    /* 运转中读转速是否成功 */
+volatile int16_t g_mt_rpm_before[4];  /* 运转前实际转速 */
+volatile int16_t g_mt_rpm_during[4];  /* 运转中实际转速（关键：不为 0 说明电机真在转） */
+volatile uint8_t g_mt_step;           /* 当前测到第几台 */
+
+/* 逐台：读状态 -> 使能 -> 读转速 -> 给 60RPM 转 1 秒 -> 读转速 -> 停。
+ * 建议把车架空（轮子离地）再开这个模式。 */
 static void wheel_test(void)
 {
     for (uint8_t i = 0U; i < 4U; ++i)
     {
-        (void)zdt_can_set_speed(g_motor_addr[i], ZDT_DIR_CW, 30U, 20U);
-        HAL_Delay(2000U);
-        (void)zdt_can_set_speed(g_motor_addr[i], ZDT_DIR_CW, 0U, 20U);
-        HAL_Delay(500U);
+        uint8_t st = 0U;
+        int16_t rpm = 0;
+
+        g_mt_step = i;
+        g_mt_status_ok[i] = zdt_can_read_status(g_motor_addr[i], &st);
+        g_mt_status_val[i] = st;
+        g_mt_enable_ok[i] = zdt_can_enable(g_motor_addr[i], 1U);
+
+        g_mt_read0_ok[i] = zdt_can_read_speed(g_motor_addr[i], &rpm);
+        g_mt_rpm_before[i] = rpm;
+
+        (void)zdt_can_set_speed(g_motor_addr[i], ZDT_DIR_CW, 60U, 10U);
+        HAL_Delay(1000U);
+
+        rpm = 0;
+        g_mt_read1_ok[i] = zdt_can_read_speed(g_motor_addr[i], &rpm);
+        g_mt_rpm_during[i] = rpm;
+
+        (void)zdt_can_set_speed(g_motor_addr[i], ZDT_DIR_CW, 0U, 10U);
+        HAL_Delay(300U);
     }
 
     while (1)
@@ -218,29 +362,126 @@ static void wheel_test(void)
 /* 主程序                                                                    */
 /* ------------------------------------------------------------------------- */
 
+#if APP_IMU_MONITOR_MODE
+/* 只监控 IMU：记录 yaw 极值、峰值角速度、在线计数，用来单独验证陀螺仪 */
+volatile float   g_mon_yaw_min;
+volatile float   g_mon_yaw_max;
+volatile float   g_mon_rate_max;
+volatile uint32_t g_mon_online_cnt;
+volatile uint32_t g_mon_loops;
+
+static void imu_monitor(void)
+{
+    while (1)
+    {
+        dm_imu_poll();
+
+        float y = g_imu.yaw_deg;
+        if (y < g_mon_yaw_min) g_mon_yaw_min = y;
+        if (y > g_mon_yaw_max) g_mon_yaw_max = y;
+
+        float r = g_imu.yaw_rate_dps;
+        if (r < 0.0f) r = -r;
+        if (r > g_mon_rate_max) g_mon_rate_max = r;
+
+        if (dm_imu_is_online()) ++g_mon_online_cnt;
+        ++g_mon_loops;
+
+        HAL_Delay(2U);
+    }
+}
+#endif
+
+#if APP_AIR_TEST_MODE
+/* 架空观察轮子转向：反复做“四轮同向”和“左右反向”，慢速长时，方便用眼睛看清。
+ * 走的是真实底盘通路（含 INVERT 修正和轮转发帧），所以看到的就是跑车时的样子。
+ * 阶段 A（LED 闪 1 次）：直行，四轮应同向，轮子底部往车尾方向推。
+ * 阶段 B（LED 闪 2 次）：原地右转，左侧两个轮子一个方向、右侧两个反方向。 */
+static void air_wheel_test(void)
+{
+    for (uint8_t round = 0U; round < 3U; ++round)
+    {
+        /* --- 阶段 A：直行 5 秒 --- */
+        led_blink_count(1U);
+        delay_with_imu(400U);      /* 闪灯是阻塞的，补收 IMU 帧，否则会被判离线 */
+        chassis_clear_fault();
+        chassis_set_target(0.10f, 0.0f, 0.0f, 0.0f, 0U, HEADING_MAX_WZ_DPS);
+        for (uint16_t k = 0U; k < 500U; ++k)
+        {
+            dm_imu_poll();
+            chassis_update(0.01f);
+            HAL_Delay(10U);
+        }
+        chassis_stop();
+        delay_with_imu(2000U);
+
+        /* --- 阶段 B：原地右转 5 秒 --- */
+        led_blink_count(2U);
+        delay_with_imu(400U);      /* 同上：补收 IMU，避免闪灯期间被判离线 */
+        chassis_clear_fault();
+        chassis_set_target(0.0f, 0.0f, -40.0f, 0.0f, 0U, HEADING_MAX_WZ_DPS);
+        for (uint16_t k = 0U; k < 500U; ++k)
+        {
+            dm_imu_poll();
+            chassis_update(0.01f);
+            HAL_Delay(10U);
+        }
+        chassis_stop();
+        delay_with_imu(2000U);
+    }
+
+    /* 做完就一直慢闪，方便判断已经结束 */
+    while (1)
+    {
+        led_blink_count(2U);
+    }
+}
+#endif
+
 int main(void)
 {
     HAL_Init();
     SystemClock_Config();
     MX_GPIO_Init();
     led_off();
+    g_boot_stage = 0U;
+    g_motors_online = 0U;
+
+    /* 冷上电时 A 板电源轨、CAN 收发器、ZDT 驱动器都比 MCU 慢几秒。
+     * 先干等 2.5s，等整机供电稳定，避免“只上电不动、按复位才动”。 */
+    HAL_Delay(2500U);
 
 #if APP_DIAG_MODE
     /* 诊断固件：扫描电机地址并逐个点动，不初始化 IMU/不跑轨迹 */
     diag_run();
 #endif
 
-    /* 1. CAN1 初始化（500 kbps，4 台 ZDT 电机） */
-    if (!zdt_can_init(ZDT_BTR_500K)) led_report(1U);
+    /* 1. 等 CAN1 能退出初始化：冷上电时 CAN 收发器/驱动器供电比 MCU 慢，
+     * 第一次 zdt_can_init 会失败。一直重试直到成功，期间 LED 单闪。 */
+    while (!zdt_can_init(ZDT_BTR_500K))
+    {
+        led_blink_count(1U);
+        HAL_Delay(400U);
+    }
+    g_boot_stage = 1U;
     HAL_Delay(500U);
 
-    /* 2. 探测电机。四轮必须四台都在线 */
-    uint8_t motors_online = motor_probe();
-    led_blink_count(motors_online);
-    if (motors_online < 4U) led_report(2U);
+    /* 2. 等四台电机都应答：没凑齐就重试，直到四台都在线，期间 LED 双闪。
+     * 这等价于“等系统就绪再自动发车”，不用再手动按复位键。 */
+    uint8_t motors_online = 0U;
+    while ((motors_online = motor_probe()) < 4U)
+    {
+        led_blink_count(2U);
+        HAL_Delay(400U);
+        (void)zdt_can_init(ZDT_BTR_500K);   /* 清掉可能的 bus-off 再试 */
+    }
+    g_motors_online = motors_online;
+    g_boot_stage = 2U;
+    led_blink_count(motors_online);   /* 4 快闪 */
 
     /* 3. 使能 + 解除堵转保护 */
     motor_prepare();
+    g_boot_stage = 3U;
 
     /* 底盘初始化：PID 增益、轮速斜坡、四轮 0 速度。必须在发车前调用 */
     chassis_init();
@@ -249,32 +490,49 @@ int main(void)
     wheel_test();
 #endif
 
+#if APP_MOTION_TEST_MODE
+    motion_test();
+#endif
+
     /* 4. DM-IMU：找不到就循环重试，LED 3 快闪 */
     while (!dm_imu_init())
     {
         led_blink_count(3U);
         HAL_Delay(800U);
     }
+    g_boot_stage = 4U;
     led_blink_count(2U);       /* 2 = 电机 + IMU 都就绪 */
     dm_imu_zero_yaw();         /* 上电位置作为 0° */
+
+#if APP_IMU_MONITOR_MODE
+    imu_monitor();             /* 只测陀螺仪，不跑车 */
+#endif
+
+#if APP_AIR_TEST_MODE
+    air_wheel_test();          /* 架空观察四轮转向，不跑轨迹 */
+#endif
 
     /* 5. 等待发车 */
 #if APP_REQUIRE_START_BUTTON
     wait_for_start();
 #else
-    HAL_Delay(2000U);
+    delay_with_imu(500U);   /* 一上电就走，只留 0.5s 让 IMU 稳定 */
 #endif
+    g_boot_stage = 5U;
 
     if (!dm_imu_is_online()) led_report(3U);
 
-    HAL_Delay(APP_START_DELAY_MS);
+    delay_with_imu(APP_START_DELAY_MS);
 
     /* 延时期间 IMU 帧会在 FIFO 里堆积，发车前再收一次并确认在线 */
     dm_imu_poll();
     if (!dm_imu_is_online()) led_report(3U);
 
     dm_imu_zero_yaw();         /* 发车瞬间再归零，把等待期间的漂移清掉 */
+    motor_prepare();           /* 每次发车前重新解除堵转 + 使能，防止上一轮留下的保护状态 */
+    trace_begin();             /* 黑匣子：从发车时刻开始记 100Hz 数据 */
     traj_start(g_demo_route, (uint8_t)DEMO_ROUTE_COUNT);
+    g_boot_stage = 6U;
 
     uint32_t next_control = HAL_GetTick();
     uint32_t last_control = HAL_GetTick();
@@ -320,6 +578,7 @@ int main(void)
                 else traj_update(dt);
             }
             chassis_update(dt);
+            trace_tick();     /* 黑匣子：记录本周期真实下发的轮速与航向 */
         }
 
         /* ---- 运行故障：锁存、闪码、等按键复位 ---- */
@@ -351,6 +610,7 @@ int main(void)
                 led_off();
             }
 
+#if APP_REQUIRE_START_BUTTON
             if (button_pressed_event() && dm_imu_is_online())
             {
                 chassis_clear_fault();
@@ -358,12 +618,14 @@ int main(void)
                 dm_imu_zero_yaw();
                 traj_start(g_demo_route, (uint8_t)DEMO_ROUTE_COUNT);
             }
+#endif
 
             HAL_Delay(5U);
             continue;
         }
 
         /* ---- 按键：运行中急停；停止后重新发车 ---- */
+#if APP_REQUIRE_START_BUTTON
         if (button_pressed_event())
         {
             if (traj_is_running())
@@ -378,6 +640,7 @@ int main(void)
                 traj_start(g_demo_route, (uint8_t)DEMO_ROUTE_COUNT);
             }
         }
+#endif
 
         /* ---- 心跳灯：运行 2Hz，空闲 1Hz ---- */
         uint32_t period = traj_is_running() ? 250U : 500U;

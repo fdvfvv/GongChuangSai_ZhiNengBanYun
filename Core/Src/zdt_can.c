@@ -11,7 +11,11 @@ volatile uint32_t g_can2_ready = 0;  /* CAN2(PB5/PB13)  就绪 */
 volatile uint32_t g_can_active = 0;  /* 0=无, 1=CAN1, 2=CAN2 */
 static CAN_TypeDef *s_can = NULL;    /* 当前使用的 CAN 控制器 */
 
-/* 发一帧扩展帧: 邮箱0, 返回 1=已投递。
+/* 发一帧扩展帧，返回 1=已投递。
+ * 用三个发送邮箱轮转：100Hz 控制环里一个周期要连发 4 帧(四轮)，
+ * 只盯邮箱 0 的话后 3 帧会被判“邮箱忙”直接丢掉，表现就是
+ * 某个轮子收不到命令、四轮不同时起步。这里三个邮箱都排队，
+ * 第 4 帧再等最先空出来的那个。
  * 超时用硬件计数循环(不依赖 SysTick 中断): 16MHz 下 800000 次迭代 ≈ 30ms,
  * 避免 uwTick 停走时死循环卡死整个程序。
  * spin_budget 用于区分“启动探测可等”和“控制循环只等一小会”。 */
@@ -19,19 +23,24 @@ static uint8_t can_tx_budget(CAN_TypeDef *can, uint32_t extid,
                              const uint8_t *data, uint8_t dlc,
                              uint32_t spin_budget)
 {
+  uint32_t mb = 3U;
+
   for (volatile uint32_t spin = 0U; spin < spin_budget; ++spin)
   {
-    if ((can->TSR & CAN_TSR_TME0) != 0U) break;
+    uint32_t tsr = can->TSR;
+    if ((tsr & CAN_TSR_TME0) != 0U) { mb = 0U; break; }
+    if ((tsr & CAN_TSR_TME1) != 0U) { mb = 1U; break; }
+    if ((tsr & CAN_TSR_TME2) != 0U) { mb = 2U; break; }
   }
-  if ((can->TSR & CAN_TSR_TME0) == 0U) return 0U; /* 邮箱0仍被占用(总线无ACK重传中) */
+  if (mb > 2U) return 0U;   /* 三个邮箱都还占着 */
 
-  can->sTxMailBox[0].TIR = (extid << 3) | (1U << 2); /* IDE=扩展帧 */
-  can->sTxMailBox[0].TDTR = (uint32_t)(dlc & 0x0FU);
-  can->sTxMailBox[0].TDLR = ((uint32_t)data[0]) | ((uint32_t)data[1] << 8) |
-                            ((uint32_t)data[2] << 16) | ((uint32_t)data[3] << 24);
-  can->sTxMailBox[0].TDHR = ((uint32_t)data[4]) | ((uint32_t)data[5] << 8) |
-                            ((uint32_t)data[6] << 16) | ((uint32_t)data[7] << 24);
-  can->sTxMailBox[0].TIR |= 1U; /* TXRQ 置起 */
+  can->sTxMailBox[mb].TIR = (extid << 3) | (1U << 2); /* IDE=扩展帧 */
+  can->sTxMailBox[mb].TDTR = (uint32_t)(dlc & 0x0FU);
+  can->sTxMailBox[mb].TDLR = ((uint32_t)data[0]) | ((uint32_t)data[1] << 8) |
+                             ((uint32_t)data[2] << 16) | ((uint32_t)data[3] << 24);
+  can->sTxMailBox[mb].TDHR = ((uint32_t)data[4]) | ((uint32_t)data[5] << 8) |
+                             ((uint32_t)data[6] << 16) | ((uint32_t)data[7] << 24);
+  can->sTxMailBox[mb].TIR |= 1U; /* TXRQ 置起 */
   return 1U;
 }
 
@@ -73,6 +82,19 @@ static uint8_t can_init_one(CAN_TypeDef *can, GPIO_TypeDef *port,
   if (can == CAN1) __HAL_RCC_CAN1_CLK_ENABLE();
   else             __HAL_RCC_CAN2_CLK_ENABLE();
 
+  /* 全复位 CAN 外设：冷上电后 bxCAN 可能残留异常状态（卡初始化/bus-off），
+   * 单纯 toggle INRQ 不一定能清干净，RCC 复位最彻底。 */
+  if (can == CAN1)
+  {
+    RCC->APB1RSTR |= RCC_APB1RSTR_CAN1RST;
+    RCC->APB1RSTR &= ~RCC_APB1RSTR_CAN1RST;
+  }
+  else
+  {
+    RCC->APB1RSTR |= RCC_APB1RSTR_CAN2RST;
+    RCC->APB1RSTR &= ~RCC_APB1RSTR_CAN2RST;
+  }
+
   /* 使能 GPIO 时钟 */
   if (port == GPIOA)      __HAL_RCC_GPIOA_CLK_ENABLE();
   else if (port == GPIOB) __HAL_RCC_GPIOB_CLK_ENABLE();
@@ -95,8 +117,11 @@ static uint8_t can_init_one(CAN_TypeDef *can, GPIO_TypeDef *port,
   can->BTR = btr; /* 波特率由调用方指定 */
 
   /* 自动离线恢复: 总线干扰导致 bus-off 后自动回到总线,
-   * 否则 TEC 计满 255 后控制器永久停发, 电机就收不到命令了 */
-  can->MCR |= CAN_MCR_ABOM;
+   * 否则 TEC 计满 255 后控制器永久停发, 电机就收不到命令了。
+   * NART=1: 禁止无限自动重传。少一台电机时，一帧只失败一次，
+   * 不会因为无限重传把 TEC 打到 255、把整条总线拖进 bus-off，
+   * 从而把本来正常的电机也一起拖停。 */
+  can->MCR |= CAN_MCR_ABOM | CAN_MCR_NART;
 
   /* 退出睡眠 + 退出初始化(正常模式)。
    * bxCAN 退出初始化需先监测到总线空闲(11个连续隐性位),

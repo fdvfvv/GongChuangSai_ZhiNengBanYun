@@ -20,9 +20,15 @@
 #include "zdt_can.h"
 #include "main.h"
 
-/* 扫描地址范围：ZDT 地址可设 1~255，这里先扫最常见的 1~8 */
-#define DIAG_ADDR_MAX  8U
+/* 你的四台地址是 1~4；只扫 1~4，少地址时不会额外制造无 ACK 帧 */
+#define DIAG_ADDR_MAX  4U
 #define DIAG_TEST_RPM  20U
+
+/* 给 ST-Link 看诊断结果：bit0~bit7 对应地址 1~8 */
+volatile uint16_t g_diag_found_mask;
+volatile uint8_t  g_diag_count;
+volatile uint8_t  g_diag_scan_done;
+volatile uint8_t  g_diag_testing_addr;
 
 static void diag_led_on(void)
 {
@@ -102,6 +108,10 @@ void diag_run(void)
     uint8_t count = 0U;
 
     diag_led_off();
+    g_diag_found_mask = 0U;
+    g_diag_count = 0U;
+    g_diag_scan_done = 0U;
+    g_diag_testing_addr = 0U;
 
     if (!zdt_can_init(ZDT_BTR_500K))
     {
@@ -117,9 +127,12 @@ void diag_run(void)
         if (zdt_can_read_status(addr, &status))
         {
             found[addr] = 1U;
+            g_diag_found_mask |= (uint16_t)(1U << addr);
             ++count;
         }
     }
+    g_diag_count = count;
+    g_diag_scan_done = 1U;
 
     /* 先闪“有几个地址应答”，再进入等待 */
     diag_blink_count(count);
@@ -140,6 +153,7 @@ void diag_run(void)
             diag_blink_count(addr);
             HAL_Delay(400U);
 
+            g_diag_testing_addr = addr;
             diag_led_on();
             (void)zdt_can_clear_clog(addr);
             (void)zdt_can_enable(addr, 1U);
@@ -149,6 +163,7 @@ void diag_run(void)
 
             (void)zdt_can_set_speed(addr, ZDT_DIR_CW, 0U, 20U);
             diag_led_off();
+            g_diag_testing_addr = 0U;
             HAL_Delay(500U);
         }
 

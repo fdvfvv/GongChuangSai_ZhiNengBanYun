@@ -31,30 +31,38 @@ static const float s_motor_invert[4] =
     MOTOR_RR_INVERT ? -1.0f : 1.0f
 };
 
+/* 四轮命令下发。
+ * 踩过的坑（2026-11-07 实测）：在同一个控制周期里连发 4 帧 F6，
+ * 后两帧会被丢掉——回读实际转速 FL/FR=30 而 RL/RR 恒为 0，
+ * 车只有前轮在推，既走不直也转不了。
+ * 改成每个周期只发一台，四台轮转：每台 25Hz 更新，步进电机内部
+ * 闭环会保持速度，实际表现和 100Hz 没区别，但绝不会互相挤掉。 */
 static void send_wheel_rpm(const float rpm[4])
 {
-    for (uint8_t i = 0U; i < 4U; ++i)
-    {
-        float r = rpm[i];
-        if (fabsf(r) < 0.5f) r = 0.0f;
+    static uint8_t s_next;
 
-        uint16_t mag = (uint16_t)(fabsf(r) + 0.5f);
-        if (mag > 3000U) mag = 3000U;
+    uint8_t i = s_next;
+    s_next = (uint8_t)((i + 1U) & 3U);
 
-        uint8_t dir = (r >= 0.0f) ? ZDT_DIR_CW : ZDT_DIR_CCW;
-        (void)zdt_can_set_speed_nowait(s_motor_addr[i], dir, mag, ZDT_ACC);
-    }
+    float r = rpm[i];
+    if (fabsf(r) < 0.5f) r = 0.0f;
+
+    uint16_t mag = (uint16_t)(fabsf(r) + 0.5f);
+    if (mag > 3000U) mag = 3000U;
+
+    uint8_t dir = (r >= 0.0f) ? ZDT_DIR_CW : ZDT_DIR_CCW;
+    (void)zdt_can_set_speed_nowait(s_motor_addr[i], dir, mag, ZDT_ACC);
 }
 
+/* 立即停车必须逐台确认应答：只发一次不等应答的话，丢帧的那台会一直转下去。 */
 static void stop_now(void)
 {
-    const float zero[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     for (uint8_t i = 0U; i < 4U; ++i)
     {
         s_rpm_cmd[i] = 0.0f;
         g_chassis_state.wheel_rpm_cmd[i] = 0.0f;
+        (void)zdt_can_set_speed(s_motor_addr[i], ZDT_DIR_CW, 0U, ZDT_ACC);
     }
-    send_wheel_rpm(zero);
 }
 
 void chassis_init(void)
@@ -123,7 +131,15 @@ void chassis_update(float dt)
     if (dt <= 0.0f) return;
     if (dt > 0.05f) dt = 0.05f;   /* 偶尔卡顿也不要把斜坡算飞 */
 
-    /* IMU 掉线：立刻停轮并锁存故障，必须重新按键/复位才能再动 */
+    /* 没在运动时（未发车/已停车）不做 IMU 掉线锁存：
+       否则车已停住，陀螺仪一卡就误报 fault 4，让人以为跑失败了。 */
+    if (!g_chassis_cmd.active)
+    {
+        pid_reset(&s_heading_pid);
+        return;
+    }
+
+    /* 正在运动时 IMU 掉线：立刻停轮并锁存故障 */
     if (!dm_imu_is_online())
     {
         if (!s_fault)
@@ -137,10 +153,6 @@ void chassis_update(float dt)
     }
 
     if (s_fault) return;
-    if (!g_chassis_cmd.active)
-    {
-        return;
-    }
 
     float wz_limit = g_chassis_cmd.wz_limit_dps;
     if (wz_limit <= 0.0f || wz_limit > HEADING_MAX_WZ_DPS)

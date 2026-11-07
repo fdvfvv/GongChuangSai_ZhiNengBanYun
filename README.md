@@ -191,9 +191,11 @@ v = min(vmax, sqrt(2*a*s), sqrt(2*a*(D-s)))
 | `WHEEL_BASE_M` | `0.220` | 前轮轴到后轮轴，按实车量 |
 | `WHEEL_TRACK_M` | `0.220` | 左轮中心到右轮中心，按实车量 |
 | `MOTOR_ADDR_FL/FR/RL/RR` | `1/2/3/4` | 电机地址到车轮位置的映射 |
-| `MOTOR_FL_INVERT` 等 | `0` | 某轮正转方向反了就改 `1` |
+| `MOTOR_FL_INVERT` 等 | `0/1/0/1` | 实测右侧 FR/RR 是镜像件，已取反；换车需重新单轮确认 |
 | `IMU_YAW_SIGN` | `+1.0f` | 左转时 yaw 变小就改 `-1.0f` |
-| `APP_REQUIRE_START_BUTTON` | `1` | 上电按 A 板 KEY(PB2) 才发车 |
+| `APP_REQUIRE_START_BUTTON` | `0` | 0=上电自动发车；A 板 PB2 是 BOOT1，按键不可用，默认不开 |
+
+> ⚠️ CAN1 上只能接 **500 kbps 的 ZDT 步进**。RoboMaster C610/C620 电调是 **1 Mbps**，必须接到 **CAN2**（和 DM-IMU 同一条 1M 总线），否则会把 CAN1 总线搞乱，表现为时通时断、必须按复位。
 
 ### 5.2 PID
 
@@ -219,9 +221,10 @@ v = min(vmax, sqrt(2*a*s), sqrt(2*a*(D-s)))
 ```c
 static const traj_segment_t g_demo_route[] =
 {
-    { TRAJ_SEG_STRAIGHT, 0.60f, 0.22f, 0.0f },  // 前进 0.60 m，0.22 m/s
-    { TRAJ_SEG_TURN,     90.0f, 50.0f, 0.0f },  // 左转 90°，最大 50°/s
-    ...
+    { TRAJ_SEG_STRAIGHT, 0.20f, 0.18f, 0.0f },  // 前进 20 cm，0.18 m/s
+    { TRAJ_SEG_TURN,    -90.0f, 60.0f, 0.0f },  // 原地右转 90°，60°/s
+    { TRAJ_SEG_STRAIGHT, 0.20f, 0.18f, 0.0f },  // 再前进 20 cm
+    { TRAJ_SEG_WAIT,      0.30f, 0.0f,  0.0f }, // 停 0.3 s
 };
 ```
 

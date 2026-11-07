@@ -109,7 +109,8 @@ static uint8_t can2_init(uint32_t btr)
     if (!can2_enter_init()) return 0U;
 
     CAN2->BTR = btr;
-    CAN2->MCR |= CAN_MCR_ABOM;   /* 总线干扰 bus-off 后自动恢复 */
+    /* ABOM 自动恢复；NART 禁止无限重传，IMU 没接时也不会把 CAN2 拖进 bus-off */
+    CAN2->MCR |= CAN_MCR_ABOM | CAN_MCR_NART;
 
     if (!can2_leave_init()) return 0U;
 
