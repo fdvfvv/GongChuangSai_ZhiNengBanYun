@@ -50,6 +50,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/chassis_math.c
     Core/Src/chassis.c
     Core/Src/trajectory.c
+    Core/Src/diag.c
 )
 
 # Add include paths

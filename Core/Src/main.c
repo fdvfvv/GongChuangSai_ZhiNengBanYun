@@ -28,6 +28,7 @@
 #include "dm_imu.h"
 #include "chassis.h"
 #include "trajectory.h"
+#include "diag.h"
 
 #include <math.h>
 
@@ -223,6 +224,11 @@ int main(void)
     SystemClock_Config();
     MX_GPIO_Init();
     led_off();
+
+#if APP_DIAG_MODE
+    /* 诊断固件：扫描电机地址并逐个点动，不初始化 IMU/不跑轨迹 */
+    diag_run();
+#endif
 
     /* 1. CAN1 初始化（500 kbps，4 台 ZDT 电机） */
     if (!zdt_can_init(ZDT_BTR_500K)) led_report(1U);

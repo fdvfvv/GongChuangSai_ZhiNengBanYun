@@ -95,4 +95,8 @@
 /* 1 = 上电只做单轮 30RPM 点动，用来确认地址/方向；确认完改回 0 */
 #define APP_WHEEL_TEST_MODE      0
 
+/* 1 = 编译“电机 CAN 诊断固件”：扫描地址 1~8，按 KEY 逐个点动。
+ * 正常跑车必须改回 0。 */
+#define APP_DIAG_MODE            0
+
 #endif /* APP_CONFIG_H */
