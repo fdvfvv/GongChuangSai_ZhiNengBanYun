@@ -236,6 +236,9 @@ int main(void)
     /* 3. 使能 + 解除堵转保护 */
     motor_prepare();
 
+    /* 底盘初始化：PID 增益、轮速斜坡、四轮 0 速度。必须在发车前调用 */
+    chassis_init();
+
 #if APP_WHEEL_TEST_MODE
     wheel_test();
 #endif

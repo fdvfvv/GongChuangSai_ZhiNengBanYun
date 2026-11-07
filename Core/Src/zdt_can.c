@@ -308,7 +308,10 @@ uint8_t zdt_can_read_status(uint8_t addr, uint8_t *status)
   uint8_t dlc = 0U;
 
   if (!zdt_can_send_cmd(addr, payload, sizeof(payload))) return 0U;
-  if (!can_recv(addr, ZDT_CMD_RD_STATUS, data, &dlc, 300000U)) return 0U;
+
+  /* 探测阶段不用等太久：500K 下正常电机 1ms 内就回；
+   * 等 300000 次自旋会让“少一台电机”上电排查多等 30 秒。 */
+  if (!can_recv(addr, ZDT_CMD_RD_STATUS, data, &dlc, 30000U)) return 0U;
   if (dlc < 3U) return 0U;
 
   *status = data[1];

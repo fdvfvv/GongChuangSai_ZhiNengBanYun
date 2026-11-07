@@ -19,6 +19,8 @@
 #define DM_IMU_BTR_1M     0x00140001U
 #define DM_IMU_BTR_500K   0x00140003U
 
+#define DM_IMU_REG_GYRO_DATA       2U
+#define DM_IMU_REG_EULER_DATA      3U
 #define DM_IMU_REG_SET_ZERO         5U
 #define DM_IMU_REG_SET_DELAY        10U
 #define DM_IMU_REG_CHANGE_ACTIVE    11U
@@ -157,6 +159,13 @@ static void imu_write_reg(uint8_t reg, uint32_t value)
     (void)can2_tx_std(IMU_SLAVE_ID, buf, 8U);
 }
 
+/* 请求单帧数据：CC reg 00 DD 00 00 00 00 */
+static void imu_read_reg(uint8_t reg)
+{
+    uint8_t buf[8] = {0xCCU, reg, 0x00U, 0xDDU, 0U, 0U, 0U, 0U};
+    (void)can2_tx_std(IMU_SLAVE_ID, buf, 8U);
+}
+
 static void imu_send_active_config(void)
 {
     /* 不主动改通信接口/波特率：能收到数据说明已经在这条 CAN 上，
@@ -291,6 +300,27 @@ uint8_t dm_imu_init(void)
             }
             HAL_Delay(2U);
         }
+
+        /* 有些固件/配置下“主动上报”不生效，但请求-应答一定可用。
+         * 这里退回 100Hz 请求欧拉角 + 角速度，避免一直卡在 LED 3。 */
+        uint32_t req_start = HAL_GetTick();
+        while ((HAL_GetTick() - req_start) < 600U)
+        {
+            imu_read_reg(DM_IMU_REG_EULER_DATA);
+            imu_read_reg(DM_IMU_REG_GYRO_DATA);
+            for (uint8_t k = 0U; k < 5U; ++k)
+            {
+                dm_imu_poll();
+                HAL_Delay(2U);
+            }
+            if (g_imu.last_yaw_ms != 0U)
+            {
+                g_imu.configured = 2U;   /* 2 = 请求-应答模式 */
+                g_imu.baud_index = i;
+                g_imu.online = 1U;
+                return 1U;
+            }
+        }
     }
 
     /* 没找到也把 CAN2 留在首选波特率，主循环可以继续重试 */
@@ -302,6 +332,20 @@ uint8_t dm_imu_init(void)
 
 void dm_imu_poll(void)
 {
+    /* 请求-应答模式：每 10ms 主动要一帧欧拉角 + 角速度。
+     * 主动上报模式(configured==1)不额外发请求。 */
+    if (g_imu.configured == 2U)
+    {
+        static uint32_t last_req_ms;
+        uint32_t now = HAL_GetTick();
+        if ((now - last_req_ms) >= 10U)
+        {
+            last_req_ms = now;
+            imu_read_reg(DM_IMU_REG_EULER_DATA);
+            imu_read_reg(DM_IMU_REG_GYRO_DATA);
+        }
+    }
+
     for (uint8_t n = 0U; n < 8U; ++n)
     {
         if ((CAN2->RF0R & CAN_RF0R_FMP0_Msk) == 0U) break;
